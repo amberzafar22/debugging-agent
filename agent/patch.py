@@ -64,7 +64,7 @@ def generate_patch(source_file_path: str, hypothesis: Hypothesis, failure_output
 
     prompt = _build_patch_prompt(original_code, hypothesis, failure_output)
 
-    model = genai.GenerativeModel("gemini-3.6-flash")
+    model = genai.GenerativeModel("gemini-3.5-flash-lite")
     response = model.generate_content(prompt)
 
     new_code = response.text.strip()

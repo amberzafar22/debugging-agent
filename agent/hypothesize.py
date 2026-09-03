@@ -102,7 +102,7 @@ def generate_hypothesis(
     source_code = source_path.read_text()
     prompt = _build_prompt(source_code, failure_output, test_id)
 
-    model = genai.GenerativeModel("gemini-3.6-flash")
+    model = genai.GenerativeModel("gemini-3.5-flash-lite")
     response = model.generate_content(prompt)
 
     raw_text = response.text.strip()

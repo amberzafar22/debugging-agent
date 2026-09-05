@@ -74,7 +74,43 @@ python agent\run_agent.py <repo_path> <source_file_path> <test_id>
 python agent\evaluate.py benchmarks\benchmark-repo
 ```
 
+## Web frontend
+
+A Flask-based web UI lets you watch the agent work live in the browser,
+instead of reading terminal output.
+
+```
+frontend/
+├── app.py                 # Flask routes
+└── templates/index.html   # UI + JavaScript
+agent/web_runner.py         # generator version of the loop, shared by the UI
+```
+
+**How it works:**
+- The core loop is a Python **generator** (`web_runner.py`) that `yield`s
+  one event per step (status, hypothesis, diff, result) instead of just
+  printing.
+- The browser connects via **Server-Sent Events (SSE)** — a one-way
+  streaming connection — so each step appears the instant it happens,
+  not all at once at the end.
+- When a patch passes its test, the generator **pauses** and sends a
+  `diff` event instead of auto-accepting. The browser shows the diff
+  with Accept/Reject buttons. Since SSE only flows server→browser, the
+  human's decision comes back via a separate `/approve` or `/reject`
+  request — a rejection rolls back the patch and reopens a **new**
+  stream starting from the next iteration, so the loop resumes exactly
+  where it left off.
+- A dropdown lets you pick any of the 8 benchmark bugs to run live.
+
+**Run it:**
+```powershell
+cd frontend
+python app.py
+```
+Then open `http://localhost:5050`.
+
 ## Evaluation results
+
 
 Benchmark: 5 small Python functions, each with one deliberately planted
 bug, ranging from simple off-by-one errors to a case-sensitivity edge case.
@@ -88,6 +124,26 @@ bug, ranging from simple off-by-one errors to a case-sensitivity edge case.
 | `count_vowels` — misses uppercase vowels | Harder | Fixed | 1 |
 
 **Success rate: 5/5 (100%)**
+
+Also tested against 3 real historical bugs from the [humanize](https://github.com/python-humanize/humanize)
+library — each verified to reproduce exactly as it did in real history,
+and resolved by the agent independently (in one case, producing a fix
+character-for-character identical to the real historical commit).
+
+| Real bug | Source commit | Result |
+|---|---|---|
+| `apnumber` — AP style zero handling | `2f179b6` | Fixed |
+| `intword` — rounding rollover edge case | `818c9b3` | Fixed |
+| `naturalsize` — negative byte counts | `db96782` | Fixed |
+
+**Combined: 8/8 (100%)** across both tiers.
+
+The guardrails were also stress-tested directly: a deliberately
+unsatisfiable test was used to force the agent through all 3 iterations,
+confirming the iteration cap stops it correctly, and that auto-rollback
+fires after every failed attempt (verified via terminal output showing
+"Rolling back..." three times, ending in "Reached max iterations (3)
+without a fix").
 
 ## Known limitations
 
@@ -112,9 +168,15 @@ debugging-agent/
 │   ├── reproduce.py     # Milestone 1
 │   ├── hypothesize.py   # Milestone 2
 │   ├── patch.py         # Milestone 3
-│   ├── run_agent.py     # Milestone 4 (guarded, interactive loop)
-│   └── evaluate.py       # Milestone 5 (batch evaluation)
+│   ├── run_agent.py     # Milestone 4 (guarded, interactive CLI loop)
+│   ├── evaluate.py       # Milestone 5 (batch evaluation)
+│   ├── evaluate_real_bugs.py  # evaluation for the real-bugs tier
+│   └── web_runner.py     # generator loop shared by the web frontend
+├── frontend/
+│   ├── app.py             # Flask routes
+│   └── templates/index.html
 ├── benchmarks/
-│   └── benchmark-repo/   # 5 known bugs used for evaluation
-└── sandbox/               # gitignored — temporary target repo clones
+│   └── benchmark-repo/    # 5 self-authored known bugs
+└── sandbox/                 # gitignored — temporary target repo clones,
+                              # also holds real-bugs-benchmark/ at runtime
 ```

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Debugging Agent</title>
+    <style>
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            max-width: 800px;
+            margin: 2em auto;
+            padding: 0 1em;
+            color: #222;
+        }
+        h1 { margin-bottom: 0.2em; }
+        .subtitle { color: #666; margin-top: 0; margin-bottom: 1.5em; }
+        select, button {
+            font-size: 1em;
+            padding: 0.5em 1em;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+        button#runBtn {
+            background: #2563eb;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button#runBtn:disabled { background: #9ca3af; cursor: default; }
+        #output {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 1em;
+            margin-top: 1em;
+            max-height: 400px;
+            overflow-y: auto;
+            border-radius: 8px;
+            font-size: 0.9em;
+        }
+        #approvalBox { margin-top: 1.5em; }
+        #diffOutput {
+            background: #fffbea;
+            border: 1px solid #f0d97a;
+            padding: 1em;
+            white-space: pre-wrap;
+            border-radius: 8px;
+            font-size: 0.85em;
+        }
+        #acceptBtn, #rejectBtn {
+            border: none;
+            color: white;
+            cursor: pointer;
+            margin-top: 0.5em;
+        }
+        #acceptBtn { background: #16a34a; }
+        #rejectBtn { background: #dc2626; margin-left: 0.5em; }
+    </style>
+</head>
+<body>
+    <h1>Autonomous Debugging Agent</h1>
+    <p class="subtitle">Pick a bug and watch the agent reproduce, diagnose, patch, and verify it — live.</p>
+
+    <select id="bugSelect">
+        {% for bug in bugs %}
+        <option value="{{ bug.id }}">{{ bug.label }}</option>
+        {% endfor %}
+    </select>
+    <button id="runBtn">Run Agent</button>
+
+    <pre id="output"></pre>
+
+    <div id="approvalBox" style="display:none;">
+        <h3>Review this patch:</h3>
+        <pre id="diffOutput"></pre>
+        <button id="acceptBtn">Accept</button>
+        <button id="rejectBtn">Reject</button>
+    </div>
+
+    <script>
+        const btn = document.getElementById("runBtn");
+        const bugSelect = document.getElementById("bugSelect");
+        const output = document.getElementById("output");
+        const approvalBox = document.getElementById("approvalBox");
+        const diffOutput = document.getElementById("diffOutput");
+        const acceptBtn = document.getElementById("acceptBtn");
+        const rejectBtn = document.getElementById("rejectBtn");
+
+        let currentIteration = 1;
+
+        function startStream(bugId, startIteration) {
+            const source = new EventSource(`/run-stream?bug_id=${bugId}&start_iteration=${startIteration}`);
+
+            source.onmessage = (event) => {
+                const step = JSON.parse(event.data);
+
+                if (step.type === "status") {
+                    output.textContent += step.message + "\n";
+                } else if (step.type === "hypothesis") {
+                    output.textContent += `  Hypothesis: ${step.function} — ${step.root_cause}\n`;
+                } else if (step.type === "diff") {
+                    currentIteration = step.iteration;
+                    diffOutput.textContent = step.diff;
+                    approvalBox.style.display = "block";
+                    source.close();
+                } else if (step.type === "result") {
+                    output.textContent += step.fixed
+                        ? `\nSUCCESS after ${step.iterations} iteration(s).\n`
+                        : `\nFAILED after ${step.iterations} iteration(s).\n`;
+                    source.close();
+                    btn.disabled = false;
+                    bugSelect.disabled = false;
+                }
+
+                output.scrollTop = output.scrollHeight;
+            };
+
+            source.onerror = () => source.close();
+        }
+
+        btn.addEventListener("click", () => {
+            btn.disabled = true;
+            bugSelect.disabled = true;
+            output.textContent = "";
+            approvalBox.style.display = "none";
+            startStream(bugSelect.value, 1);
+        });
+
+        acceptBtn.addEventListener("click", async () => {
+            await fetch("/approve", { method: "POST" });
+            approvalBox.style.display = "none";
+            output.textContent += `\nPatch approved at iteration ${currentIteration}. Bug fixed.\n`;
+            btn.disabled = false;
+            bugSelect.disabled = false;
+        });
+
+        rejectBtn.addEventListener("click", async () => {
+            approvalBox.style.display = "none";
+            output.textContent += `\nPatch rejected. Rolling back and trying again...\n`;
+
+            const response = await fetch("/reject", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bug_id: bugSelect.value, iteration: currentIteration })
+            });
+            const data = await response.json();
+
+            startStream(bugSelect.value, data.next_iteration);
+        });
+    </script>
+</body>
+</html>
